@@ -29,7 +29,6 @@ import {
   renderCompactionValue,
 } from "./compaction-checkpoint.mjs";
 import { handlePanelRequest, isPanelRoute } from "./desktop-panel.mjs";
-import { attemptJevCompaction } from "./jev-compaction.mjs";
 import { expandJevContextItems } from "./jev-context-envelope.mjs";
 import { handleGeminiRequest, isGeminiRoute } from "./gemini-surface.mjs";
 import { handleCursorRequest, isCursorRoute } from "./cursor-surface.mjs";
@@ -3111,11 +3110,11 @@ function compactionSnapshot(model, item, status = "completed") {
   };
 }
 
-function writeCompactionSse(response, model, checkpoint, encryptedContent) {
+function writeCompactionSse(response, model, checkpoint) {
   const item = {
     type: "compaction",
     id: `cmp_${randomUUID().replaceAll("-", "")}`,
-    encrypted_content: encryptedContent || encodeCheckpoint(checkpoint),
+    encrypted_content: encodeCheckpoint(checkpoint),
   };
   const created = compactionSnapshot(model, undefined, "in_progress");
   const completed = { ...created, status: "completed", output: [item] };
@@ -4150,40 +4149,6 @@ async function handleResponses(request, response, requestUrl) {
     const compactV2 =
       Array.isArray(payload.input) &&
       payload.input.at(-1)?.type === "compaction_trigger";
-
-    // The ordinary native/routed generation path is unchanged. Jev selects
-    // source evidence into the router's existing kcr2 continuation format;
-    // native replay below already renders that format before calling OpenAI.
-    // Exact-route probes still exercise the provider they explicitly name.
-    if ((compactV1 || compactV2) && !exactRouteProbe) {
-      const jev = await attemptJevCompaction(payload.input, { signal: controller.signal });
-      if (jev.status === "compacted") {
-        if (compactV2 && payload.stream !== false) {
-          writeCompactionSse(response, payload.model, jev.checkpoint, jev.encryptedContent);
-        } else if (compactV2) {
-          const item = { type: "compaction", id: `cmp_${randomUUID().replaceAll("-", "")}`, encrypted_content: jev.encryptedContent };
-          writeJson(response, 200, compactionSnapshot(payload.model, item));
-        } else {
-          writeJson(response, 200, { output: [
-            ...compactOutput(payload.input, jev.checkpoint).slice(0, -1),
-            { type: "compaction", id: `cmp_${randomUUID().replaceAll("-", "")}`, encrypted_content: jev.encryptedContent },
-          ] });
-        }
-        for (const report of jev.requests || []) {
-          recordObservedUsage({
-            model: report.model || "~typesafe/jev-latest", provider: "openrouter",
-            status: 200, durationMs: report.elapsed_ms,
-            inputTokens: report.usage?.input_tokens, outputTokens: report.usage?.output_tokens,
-          }, diagnostics);
-        }
-        console.error("[codex-router] compaction=jev checkpoint=kcr2 status=200");
-        finalStatus = 200;
-        activityStatus = 200;
-        usageRecorded = true;
-        return;
-      }
-      if (jev.status === "fallback") console.error(`[codex-router] compaction=jev fallback=${jev.reason}`);
-    }
 
     if (route && (compactV1 || compactV2)) {
       const compaction = await handleRoutedCompaction(
