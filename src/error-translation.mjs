@@ -50,6 +50,22 @@ function parseUpstreamError(bodyText) {
   }
 }
 
+// LiteLLM sometimes leaves the provider JSON as the remainder, either as a
+// bare object or as a Python bytes literal (`b'{...}'` / `b"{...}"`). Unwrap
+// that before DETAIL_LIMIT so a nested Console Go sentence is not truncated
+// out of the context-length classifier.
+function unwrapNestedUpstreamMessage(message) {
+  let text = String(message || "").trim();
+  const quotedBytes = /^b(['"])([\s\S]*)\1$/.exec(text);
+  if (quotedBytes) text = quotedBytes[2];
+  else if (/^b[{[]/.test(text)) text = text.slice(1);
+  text = text.trim();
+  if (!(text.startsWith("{") || text.startsWith("["))) return message;
+  const nested = parseUpstreamError(text);
+  if (!nested.message || nested.message === text) return message;
+  return nested.message.trim();
+}
+
 export function extractUpstreamDetail(bodyText) {
   let message = parseUpstreamError(bodyText).message;
   for (const pattern of ROUTING_NOISE) message = message.replace(pattern, "");
@@ -58,7 +74,7 @@ export function extractUpstreamDetail(bodyText) {
     previous = message;
     for (const pattern of WRAPPER_PREFIXES) message = message.replace(pattern, "");
   } while (message !== previous);
-  message = message.trim();
+  message = unwrapNestedUpstreamMessage(message.trim());
   return message.length > DETAIL_LIMIT ? message.slice(0, DETAIL_LIMIT) : message;
 }
 
@@ -132,34 +148,68 @@ function isOutOfUsage(detail, errorType) {
 // Ollama's runner after it has rendered and tokenized the complete chat
 // template, so it is authoritative context evidence even though the status is
 // not.
+const OLLAMA_INPUT_LENGTH_PATTERN =
+  /input length \((\d+) tokens\) exceeds the model's maximum context length \((\d+) tokens\)/i;
+// Both gaps are lazy, not greedy: a greedy `.{0,N}` backtracks from its
+// longest match downward, so it finds the LAST valid position for the
+// following alternation/digit run within budget rather than the first. Against
+// a message with more than one "input"/"request" occurrence, or a multi-digit
+// number followed by more digits later in the string, that lands the capture
+// mid-token -- e.g. "you requested about 282974 tokens (132890 of text input,
+// 150084 of tool input)" greedily resolves group 2 to a lone trailing "4" from
+// "150084" instead of the real total. Lazy quantifiers find the first valid
+// match instead, landing on "request" and "282974" as intended.
+const SWAPPED_CONTEXT_LENGTH_PATTERN =
+  /maximum context length (?:is|of) (\d+)(?: tokens?)?.{0,80}?(?:input|request).{0,40}?(\d+)/i;
+// Console Go names both the estimated prompt and the card. Keep this ahead of
+// the generic "prompt too long" match so those numbers survive into the
+// translated error; the unnumbered sibling still classifies as context.
+const NUMERIC_PROMPT_TOO_LONG_PATTERN =
+  /prompt too long:\s*about\s+(\d+)\s+tokens estimated[\s\S]{0,160}?maximum context length is\s+(\d+)/i;
+
 const CONTEXT_LENGTH_PATTERNS = [
-  /input length \((\d+) tokens\) exceeds the model's maximum context length \((\d+) tokens\)/i,
+  OLLAMA_INPUT_LENGTH_PATTERN,
   /input after truncation exceeds (?:the )?maximum context length/i,
-  /maximum context length (?:is|of) (\d+)(?: tokens?)?.{0,80}(?:input|request).{0,40}(\d+)/i,
+  SWAPPED_CONTEXT_LENGTH_PATTERN,
   /context[_\s-]length[_\s-]exceeded/i,
+  NUMERIC_PROMPT_TOO_LONG_PATTERN,
+  // OpenCode Console Go (and similar stealth routers) refuse a prompt whose
+  // size plus the completion budget does not fit any available backend. This
+  // is not quota, not a truncated tool call, and not a retryable 5xx.
+  /prompt too long(?: for every available model)?(?:, including the completion)?/i,
+  /reduce the length of the messages(?: or completion)?/i,
 ];
 
 export function contextLengthFailure(bodyText) {
   const detail = extractUpstreamDetail(bodyText);
-  if (!detail) return undefined;
-  for (const pattern of CONTEXT_LENGTH_PATTERNS) {
-    const match = detail.match(pattern);
-    if (!match) continue;
-    if (pattern === CONTEXT_LENGTH_PATTERNS[0]) {
-      return {
-        detail,
-        inputTokens: Number(match[1]),
-        maximumTokens: Number(match[2]),
-      };
+  const haystacks = [detail];
+  if (typeof bodyText === "string" && bodyText && bodyText !== detail) {
+    haystacks.push(bodyText);
+  }
+  for (const text of haystacks) {
+    if (!text) continue;
+    for (const pattern of CONTEXT_LENGTH_PATTERNS) {
+      const match = text.match(pattern);
+      if (!match) continue;
+      if (
+        pattern === OLLAMA_INPUT_LENGTH_PATTERN ||
+        pattern === NUMERIC_PROMPT_TOO_LONG_PATTERN
+      ) {
+        return {
+          detail: detail || match[0],
+          inputTokens: Number(match[1]),
+          maximumTokens: Number(match[2]),
+        };
+      }
+      if (pattern === SWAPPED_CONTEXT_LENGTH_PATTERN) {
+        return {
+          detail: detail || match[0],
+          inputTokens: Number(match[2]),
+          maximumTokens: Number(match[1]),
+        };
+      }
+      return { detail: detail || match[0] };
     }
-    if (pattern === CONTEXT_LENGTH_PATTERNS[2]) {
-      return {
-        detail,
-        inputTokens: Number(match[2]),
-        maximumTokens: Number(match[1]),
-      };
-    }
-    return { detail };
   }
   return undefined;
 }

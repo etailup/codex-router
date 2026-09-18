@@ -767,6 +767,48 @@ test(
 );
 
 test(
+  "Windows start and restart refuse an unregistered task instead of relaying schtasks",
+  { skip: process.platform === "win32" },
+  async (context) => {
+    for (const command of ["start", "restart"]) {
+      await context.test(command, () => {
+        const testRoot = mkdtempSync(path.join(os.tmpdir(), `codex-router-win-${command}-absent-`));
+        try {
+          // A task that is not registered: every /Query against it fails, which
+          // is exactly what schtasks.exe does for a name it cannot find.
+          const stubs = schedulerStubs(path.join(testRoot, "scheduler"), {
+            schtasksFail: "/Query",
+          });
+          const result = runWindowsService(testRoot, command, { PATH: stubs.path });
+
+          // Issue #760: this used to be schtasks.exe's own error from /Change,
+          // naming neither the task nor anything to do about it.
+          assert.equal(result.status, 1, result.stdout || result.stderr);
+          assert.equal(result.stdout.trim(), "", "a refused start must not claim a running service");
+          assert.match(result.stderr, /"Codex Router" scheduled task is not registered/);
+          assert.match(result.stderr, new RegExp(`nothing to ${command}`));
+          assert.match(result.stderr, /service\.mjs install/);
+
+          // Nothing may be mutated on the way out. /Change against a missing
+          // task is the reported failure; /Run and /End would fail the same way
+          // and an /End would stop a task the operator still has.
+          const calls = stubs.calls();
+          for (const verb of ["/Change", "/Run", "/End", "/Create", "/Delete"]) {
+            assert.equal(
+              calls.some((line) => line.includes(verb)),
+              false,
+              `${command} must not reach ${verb} with no task registered:\n${calls.join("\n")}`,
+            );
+          }
+        } finally {
+          rmSync(testRoot, { recursive: true, force: true });
+        }
+      });
+    }
+  },
+);
+
+test(
   "Windows status trusts a live launcher when Task Scheduler reports Ready",
   { skip: process.platform === "win32" },
   () => {

@@ -12,6 +12,8 @@ import { canonicalProviderId } from "./provider-selection.mjs";
 // with Go, but it uses the separately billed /zen endpoint. Exhausting Go must
 // not disable a route the operator can still pay for through Zen.
 export function cooldownScope(providerId) {
-  if (providerId === "opencode-zen") return providerId;
+  if (providerId === "opencode-zen" || String(providerId).startsWith("opencode-zen-")) {
+    return "opencode-zen";
+  }
   return canonicalProviderId(providerId);
 }

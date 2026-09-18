@@ -288,6 +288,20 @@ const CURATION_ROUTES = Object.freeze({
     ]),
     models: OPENCODE_FREE_MODELS,
   }),
+  "opencode-zen": Object.freeze({
+    providers: Object.freeze([
+      "opencode-zen",
+      "opencode-zen-messages",
+      "opencode-zen-responses",
+    ]),
+    protocols: Object.freeze(["Chat", "Messages", "Responses"]),
+    messagesProvider: "opencode-zen-messages",
+    messagesModels: Object.freeze([]),
+    responsesProvider: "opencode-zen-responses",
+    responsesModels: Object.freeze([]),
+    primaryModels: Object.freeze([]),
+    models: Object.freeze({}),
+  }),
 });
 
 const PRIMARY_BY_PROVIDER = new Map(
@@ -305,9 +319,31 @@ export function curationProviderIds(providerId) {
   return [...(CURATION_ROUTES[primary]?.providers || [primary])];
 }
 
+function zenFamilyRoute(upstreamModel) {
+  const id = String(upstreamModel || "").toLowerCase();
+  if (id.includes("gemini")) {
+    return {
+      blockedReason:
+        `The provider catalog lists ${upstreamModel}. `
+        + `OpenCode Zen serves Gemini over Google's native protocol, which this router has no adapter for, `
+        + `so it cannot be added safely.`,
+    };
+  }
+  if (id.includes("claude")) {
+    return { providerId: "opencode-zen-messages" };
+  }
+  if (id.includes("gpt-") || id.includes("grok-") || id.includes("muse-")) {
+    return { providerId: "opencode-zen-responses" };
+  }
+  return { providerId: "opencode-zen" };
+}
+
 function curatedModelRouteSelection(providerId, upstreamModel, { existingProvider } = {}) {
   const primary = curationPrimaryProviderId(providerId);
   const route = CURATION_ROUTES[primary];
+  if (primary === "opencode-zen") {
+    return zenFamilyRoute(upstreamModel);
+  }
   if (route?.responsesModels.includes(upstreamModel)) {
     return { providerId: route.responsesProvider };
   }

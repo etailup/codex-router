@@ -68,6 +68,10 @@ import {
 import { threadIdFromHeaders } from "./codex-session-names.mjs";
 import { applyOpenCodeSessionHeaders, isOpenCodeProvider } from "./opencode-session.mjs";
 import {
+  clampOpenCodeMessageContent,
+  clampUnionAlphaCompletion,
+} from "./union-alpha-compat.mjs";
+import {
   effectiveProviderCredentialStatus,
   providerApiKeyAuthoritySnapshot,
   recordProviderApiKeyRequestOutcome,
@@ -761,6 +765,9 @@ function sanitizeChatToolHistory(messages, provider, model) {
   if (isOpenCodeProvider(provider) && supportsImageInput(model)) {
     cleaned = hoistToolImagesToUserTurn(cleaned);
   }
+  if (isOpenCodeProvider(provider)) {
+    cleaned = clampOpenCodeMessageContent(cleaned);
+  }
   return requiresTrailingUserTurn(provider, model) ? trimTrailingModelTurns(cleaned) : cleaned;
 }
 
@@ -1385,6 +1392,19 @@ function normalizeBody(buffer, contentType, route) {
     if (payload.tool_choice !== undefined && payload.tool_choice !== "none") {
       payload.tool_choice = "auto";
     }
+  } else if (model.requestProfile === "omit-tool-choice") {
+    // One step past auto-tool-choice: the upstream refuses the field in any
+    // form ("auto" and "none" included) yet calls the listed tools when it is
+    // simply absent. Observed on the Qwen family behind opencode Go's Messages
+    // route on 2026-09-15 (HTTP 400 with only the model id as the body). A
+    // tool_choice of "none" still means "do not call tools", so drop the tools
+    // together with the rejected field rather than converting a prohibition
+    // into the upstream default.
+    const none = payload.tool_choice === "none"
+      || (payload.tool_choice && typeof payload.tool_choice === "object"
+        && !Array.isArray(payload.tool_choice) && payload.tool_choice.type === "none");
+    if (none) delete payload.tools;
+    delete payload.tool_choice;
   } else if (model.requestProfile === "dashscope-reasoning") {
     // One profile for every DashScope family Model Studio documents a ladder
     // for: the fold table above is keyed on `upstreamModel`, so the same entry
@@ -1417,6 +1437,7 @@ function normalizeBody(buffer, contentType, route) {
     }
   }
   if (adapter) payload = adapter.normalizeBody(payload, model);
+  clampUnionAlphaCompletion(payload, model);
   const targetPath = adapter?.targetPath
     ? adapter.targetPath({ model, body: payload })
     : undefined;

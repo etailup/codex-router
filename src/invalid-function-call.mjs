@@ -217,6 +217,33 @@ export function invalidFunctionCallArgumentsMessage({
   );
 }
 
+export function isInvalidFunctionCallArgumentsError(error) {
+  return error instanceof InvalidFunctionCallArgumentsError
+    || error?.code === INVALID_FUNCTION_CALL_ARGUMENTS_CODE;
+}
+
+function functionCallHoldId(event) {
+  if (!event || typeof event !== "object") return undefined;
+  if (event.type === "response.output_item.added" && event.item?.type === "function_call") {
+    return typeof event.item.id === "string" && event.item.id ? event.item.id : undefined;
+  }
+  if (
+    event.type === "response.function_call_arguments.delta"
+    || event.type === "response.function_call_arguments.done"
+  ) {
+    return typeof event.item_id === "string" && event.item_id ? event.item_id : undefined;
+  }
+  if (event.type === "response.output_item.done" && event.item?.type === "function_call") {
+    return typeof event.item.id === "string" && event.item.id ? event.item.id : undefined;
+  }
+  return undefined;
+}
+
+function isFunctionCallCompletion(event) {
+  return event?.type === "response.function_call_arguments.done"
+    || (event?.type === "response.output_item.done" && event.item?.type === "function_call");
+}
+
 export function historyFunctionCallArgumentsError(invalid) {
   const error = new InvalidFunctionCallArgumentsError({
     source: "history",
@@ -301,6 +328,7 @@ export class InvalidCompletedFunctionCallTransform extends Transform {
   #buffer = Buffer.alloc(0);
   #passthrough = false;
   #namesByItemId = new Map();
+  #heldCalls = new Map();
 
   constructor(lookups, eventStream = true) {
     super();
@@ -329,8 +357,10 @@ export class InvalidCompletedFunctionCallTransform extends Transform {
   _flush(callback) {
     try {
       if (!this.#passthrough) {
-        if (this.#eventStream) this.#emitSse(true);
-        else this.#finishJson();
+        if (this.#eventStream) {
+          this.#emitSse(true);
+          this.#flushAllHeld();
+        } else this.#finishJson();
       }
     } catch (error) {
       callback(error);
@@ -340,10 +370,41 @@ export class InvalidCompletedFunctionCallTransform extends Transform {
   }
 
   #reject(invalid) {
+    this.#heldCalls.clear();
     throw new InvalidFunctionCallArgumentsError({
       source: "response",
       ...invalid,
     });
+  }
+
+  #hold(itemId, original) {
+    let held = this.#heldCalls.get(itemId);
+    if (!held) {
+      held = { frames: [], bytes: 0 };
+      this.#heldCalls.set(itemId, held);
+    }
+    held.bytes += original.length;
+    if (held.bytes > MAX_JSON_CAPTURE_BYTES) {
+      this.#flushHeld(itemId);
+      return false;
+    }
+    held.frames.push(original);
+    return true;
+  }
+
+  #flushHeld(itemId) {
+    const held = this.#heldCalls.get(itemId);
+    if (!held) return;
+    this.#heldCalls.delete(itemId);
+    for (const frame of held.frames) this.push(frame);
+  }
+
+  #dropHeld(itemId) {
+    this.#heldCalls.delete(itemId);
+  }
+
+  #flushAllHeld() {
+    for (const itemId of [...this.#heldCalls.keys()]) this.#flushHeld(itemId);
   }
 
   #withKnownName(event) {
@@ -408,12 +469,33 @@ export class InvalidCompletedFunctionCallTransform extends Transform {
       }
     }
     event = this.#withKnownName(event);
+    const holdId = functionCallHoldId(event);
+    if (holdId) {
+      if (!this.#hold(holdId, original)) {
+        this.push(original);
+        return;
+      }
+      const invalid = findUnusableCompletedFunctionCall(event, { lookups: this.#lookups });
+      if (invalid) {
+        this.#dropHeld(holdId);
+        this.#reject(invalid);
+      }
+      if (isFunctionCallCompletion(event)) this.#flushHeld(holdId);
+      return;
+    }
     const invalid = findUnusableCompletedFunctionCall(event, { lookups: this.#lookups });
     if (invalid) this.#reject(invalid);
+    if (
+      event?.type === "response.completed"
+      || event?.type === "response.done"
+    ) {
+      this.#flushAllHeld();
+    }
     this.push(original);
   }
 
   #releaseJson() {
+    this.#flushAllHeld();
     if (this.#buffer.length) this.push(this.#buffer);
     this.#buffer = Buffer.alloc(0);
     this.#passthrough = true;

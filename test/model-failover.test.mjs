@@ -421,6 +421,63 @@ test("rankFailoverCandidates orders a tier by the registry's own preference", ()
   );
 });
 
+test("rankFailoverCandidates admits a same-family 1M sibling only when asked", () => {
+  const from = model("opencode-go-messages/union-alpha", "opencode-go-messages", {
+    contextWindow: 262_144,
+  });
+  const largeSibling = model("opencode-go/glm-5.3-flash", "opencode-go", {
+    contextWindow: 1_000_000,
+    priority: 29,
+  });
+  const smallSibling = model("opencode-go-messages/qwen3.8-max", "opencode-go-messages", {
+    contextWindow: 262_144,
+    priority: 42,
+  });
+  const other = model("kimi/k3", "kimi", { contextWindow: 1_000_000, priority: 10 });
+  const models = [largeSibling, smallSibling, other];
+
+  const blocked = rankFailoverCandidates(models, {
+    from,
+    estimatedTokens: 434983,
+  });
+  assert.deepEqual(
+    blocked.map((entry) => entry.model.slug),
+    ["kimi/k3"],
+  );
+
+  const allowed = rankFailoverCandidates(models, {
+    from,
+    estimatedTokens: 434983,
+    allowSameFamily: true,
+  });
+  assert.ok(allowed.some((entry) => entry.model.slug === largeSibling.slug));
+  assert.equal(
+    allowed.some((entry) => entry.model.slug === smallSibling.slug),
+    false,
+  );
+  assert.ok(allowed.some((entry) => entry.model.slug === other.slug));
+});
+
+test("classifyRoutedFailure does not swap a Console Go context-length 400", () => {
+  const inner = JSON.stringify({
+    type: "error",
+    error: {
+      type: "invalid_request_error",
+      message:
+        "Error from provider (Console Go): Upstream request failed: [invalid_request_error] "
+        + "Prompt too long: about 434983 tokens estimated, but the maximum context length is 262144 tokens including the completion. "
+        + "Reduce the length of the messages.",
+    },
+  });
+  const bodyText = JSON.stringify({
+    error: {
+      message:
+        `litellm.BadRequestError: AnthropicException - ${inner}. Received Model Group=opencode-go-messages-union-alpha\nAvailable Model Group Fallbacks=None`,
+    },
+  });
+  assert.equal(classifyRoutedFailure({ status: 400, bodyText, now: NOW }).swap, false);
+});
+
 test("rankFailoverCandidates never routes back into the same quota", () => {
   const ranked = rankFailoverCandidates(
     [

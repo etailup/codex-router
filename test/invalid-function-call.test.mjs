@@ -206,8 +206,8 @@ test("a completed unterminated function_call fails before the done frame is rela
   assert.match(error.message, /exec_command/);
   assert.match(error.message, /did not relay the completed item/);
   const text = output.toString("utf8");
-  assert.match(text, /output_item\.added/);
-  assert.match(text, /function_call_arguments\.delta/);
+  assert.doesNotMatch(text, /output_item\.added/);
+  assert.doesNotMatch(text, /function_call_arguments\.delta/);
   assert.doesNotMatch(text, /function_call_arguments\.done/);
   assert.doesNotMatch(text, /output_item\.done/);
 });
@@ -235,6 +235,7 @@ test("a done frame without a name still fails and names the tool from added", as
   );
   assert.equal(error.toolName, "exec_command");
   assert.match(error.message, /exec_command/);
+  assert.doesNotMatch(output.toString("utf8"), /output_item\.added/);
   assert.doesNotMatch(output.toString("utf8"), /function_call_arguments\.done/);
 });
 

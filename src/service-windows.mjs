@@ -584,8 +584,31 @@ if (command === "render") {
   }
   process.stdout.write(`${JSON.stringify({ state: "stopped" })}\n`);
 } else {
-  if (command === "restart") endTask();
-  setTaskEnabled(true);
-  schtasks(["/Run", "/TN", taskName], { quiet: true, mutating: true });
-  process.stdout.write(`${JSON.stringify({ state: "running" })}\n`);
+  // start and restart. `stop` above has always guarded on taskExists(); these
+  // two did not, so an absent registration reached the operator as
+  // schtasks.exe's own complaint about `/Change` against a name that is not
+  // there -- with no statement of which task, and no fix (issue #760). That
+  // state is reachable: a restricted Task Scheduler leaves `install` reporting
+  // `installed: false` with the launchers written, and the reporter also had
+  // the task torn out from under them by the rollback #767 removed.
+  //
+  // There is nothing to recover here. `/Run` would fail the same way one call
+  // later, and re-registering the task behind a `start` would make a lifecycle
+  // verb quietly perform an install -- the asymmetry the "stop and start act
+  // on the same layer" rule exists to prevent. So name the task, say it is not
+  // registered, and point at the command that registers it.
+  if (!taskExists()) {
+    console.error(
+      `The "${taskName}" scheduled task is not registered, so there is nothing to ${command}. `
+        + "Register it with `node src/service.mjs install`, or repair the whole "
+        + "installation with `./model-router.ps1 codex doctor --fix`.",
+    );
+    // exitCode, not exit(): stdout is asynchronous for a Windows console.
+    process.exitCode = 1;
+  } else {
+    if (command === "restart") endTask();
+    setTaskEnabled(true);
+    schtasks(["/Run", "/TN", taskName], { quiet: true, mutating: true });
+    process.stdout.write(`${JSON.stringify({ state: "running" })}\n`);
+  }
 }

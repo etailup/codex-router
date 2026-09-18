@@ -187,14 +187,14 @@ test("the forwarder moves opencode tool-result images onto a user turn", async (
     CODEX_ROUTER_QUIET: "1",
   });
 
-  async function forward(model) {
+  async function forward(model, messages = history()) {
     const response = await fetch(`http://127.0.0.1:${forwarderPort}/v1/chat/completions`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${INTERNAL_KEY}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ model, messages: history() }),
+      body: JSON.stringify({ model, messages }),
     });
     assert.equal(response.status, 200, forwarder.testErrors());
     return upstreamRequests.at(-1).messages;
@@ -248,6 +248,24 @@ test("the forwarder moves opencode tool-result images onto a user turn", async (
 
     // Another provider's multimodal route is left exactly as the caller sent it.
     assert.deepEqual(await forward(models.elsewhere), history());
+
+    const huge = `data:image/png;base64,${"A".repeat(2_700_000)}`;
+    const oversized = await forward(models.vision, [
+      { role: "user", content: "look at the sheet" },
+      {
+        role: "assistant",
+        tool_calls: [
+          { id: "call_img", type: "function", function: { name: "imagegen", arguments: "{}" } },
+        ],
+      },
+      {
+        role: "tool",
+        tool_call_id: "call_img",
+        content: [{ type: "image_url", image_url: { url: huge } }],
+      },
+    ]);
+    assert.ok(!JSON.stringify(oversized).includes("A".repeat(1000)));
+    assert.match(JSON.stringify(oversized), /2,500,000 characters|2500000 characters/);
   } finally {
     await stopChild(forwarder);
     await closeServer(upstream.server);

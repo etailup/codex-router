@@ -19,6 +19,7 @@ export const REQUEST_PROFILES = Object.freeze([
   "ollama-cloud-auto-tool-choice",
   "ollama-cloud-glm-5-3",
   "ollama-cloud-glm-5-3-flash",
+  "omit-tool-choice",
   "ox-alpha",
   "qwen-plan",
   "qwen38-community",
@@ -34,6 +35,7 @@ export const CURATABLE_REQUEST_PROFILES = Object.freeze([
   "auto-tool-choice",
   "codex-encrypted-schema",
   "dashscope-reasoning",
+  "omit-tool-choice",
 ]);
 
 const CURATABLE_PROFILE_SET = new Set(CURATABLE_REQUEST_PROFILES);

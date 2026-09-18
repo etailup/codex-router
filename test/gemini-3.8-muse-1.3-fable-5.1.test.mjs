@@ -359,7 +359,7 @@ test("GLM-5.3-Flash input modalities include text and image", () => {
   assert.deepEqual(model.inputModalities, ["text", "image"]);
 });
 
-test("Qwen3.8 Flash opencode-go-messages has auto-tool-choice profile", () => {
+test("Qwen3.8 Flash opencode-go-messages omits tool_choice", () => {
   const model = MODEL_BY_SLUG.get("opencode-go-messages/qwen3.8-flash");
-  assert.equal(model.requestProfile, "auto-tool-choice");
+  assert.equal(model.requestProfile, "omit-tool-choice");
 });

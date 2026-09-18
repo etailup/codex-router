@@ -6563,6 +6563,47 @@ test("API forwarder routes opencode Go chat, Messages, and Responses surfaces", 
     );
     assert.equal(upstreamRequests[1].headers.authorization, undefined);
 
+    const unionAlpha = await fetch(
+      `http://127.0.0.1:${forwarderPort}/v1/messages`,
+      {
+        method: "POST",
+        headers: {
+          "x-api-key": INTERNAL_KEY,
+          "anthropic-version": "2023-06-01",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "opencode-go-messages-union-alpha",
+          max_tokens: 131_072,
+          messages: [{ role: "user", content: "test" }],
+        }),
+      },
+    );
+    assert.equal(unionAlpha.status, 200);
+    assert.equal(upstreamRequests[2].url, "/v1/messages");
+    assert.equal(upstreamRequests[2].body.model, "union-alpha");
+    assert.equal(upstreamRequests[2].body.max_tokens, 32_768);
+
+    const unionAlphaOmitted = await fetch(
+      `http://127.0.0.1:${forwarderPort}/v1/messages`,
+      {
+        method: "POST",
+        headers: {
+          "x-api-key": INTERNAL_KEY,
+          "anthropic-version": "2023-06-01",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "opencode-go-messages-union-alpha",
+          messages: [{ role: "user", content: "test" }],
+        }),
+      },
+    );
+    assert.equal(unionAlphaOmitted.status, 200);
+    assert.equal(upstreamRequests[3].url, "/v1/messages");
+    assert.equal(upstreamRequests[3].body.model, "union-alpha");
+    assert.equal(upstreamRequests[3].body.max_tokens, 32_768);
+
     const responses = await fetch(
       `http://127.0.0.1:${forwarderPort}/v1/responses`,
       {
@@ -6579,10 +6620,10 @@ test("API forwarder routes opencode Go chat, Messages, and Responses surfaces", 
       },
     );
     assert.equal(responses.status, 200);
-    assert.equal(upstreamRequests[2].url, "/v1/responses");
-    assert.equal(upstreamRequests[2].body.model, "gpt-5.6-luna");
+    assert.equal(upstreamRequests[4].url, "/v1/responses");
+    assert.equal(upstreamRequests[4].body.model, "gpt-5.6-luna");
     assert.equal(
-      upstreamRequests[2].headers.authorization,
+      upstreamRequests[4].headers.authorization,
       "Bearer TEST_OPENCODE_GO_API_KEY",
     );
   } finally {
@@ -7828,6 +7869,7 @@ test("router normalizes forced tool choices before LiteLLM for auto-tool-choice 
     for (const [slug, gatewayModel] of [
       ["opencode-go/deepseek-v4.1-flash", "opencode-go-deepseek-v4-1-flash"],
       ["openrouter/deepseek-v4.1-flash", "openrouter-deepseek-v4-1-flash"],
+      ["openrouter/union-alpha", "openrouter-union-alpha"],
       ["ollama-cloud/minimax-m3", "ollama-cloud-minimax-m3"],
       ["commandcode/muse-spark-1.2", "commandcode-muse-spark-1-2"],
       [
@@ -7865,6 +7907,70 @@ test("router normalizes forced tool choices before LiteLLM for auto-tool-choice 
       const sibling = await route(slug, "required");
       assert.equal(sibling.tool_choice, "required");
     }
+  } finally {
+    await stopChild(router);
+    await closeServer(gateway.server);
+  }
+});
+
+test("router omits tool_choice before LiteLLM for omit-tool-choice models", async () => {
+  const gatewayRequests = [];
+  const gateway = await mockServer(async (request, response) => {
+    gatewayRequests.push(await bodyJson(request));
+    json(response, 200, { id: "resp_test", object: "response", output: [] });
+  });
+  const routerPort = await openPort();
+  const router = run("router.mjs", {
+    CODEX_ROUTER_PORT: String(routerPort),
+    CODEX_ROUTER_GATEWAY_BASE_URL: `http://127.0.0.1:${gateway.port}/v1`,
+    CODEX_ROUTER_QUIET: "1",
+  });
+  const headers = {
+    Authorization: `Bearer ${CALLER_KEY}`,
+    "Content-Type": "application/json",
+  };
+  const tools = [{
+    type: "function",
+    name: "exec_command",
+    parameters: { type: "object", properties: { command: { type: "string" } } },
+  }];
+
+  async function route(model, toolChoice) {
+    const response = await fetch(`${routerBase(routerPort)}/responses`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        model,
+        input: "test",
+        tools,
+        ...(toolChoice === undefined ? {} : { tool_choice: toolChoice }),
+      }),
+    });
+    assert.equal(response.status, 200, router.testErrors());
+    return gatewayRequests.at(-1);
+  }
+
+  try {
+    await waitFor(`${routerBase(routerPort)}/models`, router);
+
+    const required = await route("opencode-go-messages/qwen3.8-flash", "required");
+    assert.equal(required.model, "opencode-go-messages-qwen3-8-flash");
+    assert.equal("tool_choice" in required, false);
+    assert.ok(Array.isArray(required.tools) && required.tools.length > 0);
+    assert.ok(required.tools.some((tool) => tool.name === "exec_command"));
+
+    const auto = await route("opencode-go-messages/qwen3.8-flash", "auto");
+    assert.equal("tool_choice" in auto, false);
+    assert.ok(Array.isArray(auto.tools) && auto.tools.length > 0);
+
+    const none = await route("opencode-go-messages/qwen3.8-flash", "none");
+    assert.equal("tool_choice" in none, false);
+    assert.equal("tools" in none, false);
+
+    // MiniMax on the same Messages route still accepts the field.
+    const sibling = await route("opencode-go-messages/minimax-m3", "required");
+    assert.equal(sibling.tool_choice, "required");
+    assert.ok(sibling.tools.some((tool) => tool.name === "exec_command"));
   } finally {
     await stopChild(router);
     await closeServer(gateway.server);
@@ -12072,13 +12178,12 @@ test("Zen Free Muse strips reasoning encrypted_content Console did not issue to 
   }
 });
 
-test("Go Chat/Messages, paid Zen, and other Free routes keep compatibility-sensitive wire shapes", async () => {
+test("Go Chat, paid Zen, and other Free routes keep compatibility-sensitive wire shapes", async () => {
   const testRoot = mkdtempSync(path.join(os.tmpdir(), "routing-opencode-identity-"));
   const stateDir = path.join(testRoot, "state");
   mkdirSync(stateDir, { recursive: true });
   const specs = [
     ["opencode-go", "identity-chat"],
-    ["opencode-go-messages", "identity-messages"],
     ["opencode-zen", "identity-paid-zen"],
     ["opencode-free", "identity-other-free"],
   ].map(([provider, upstreamModel], index) => ({
@@ -12212,6 +12317,101 @@ test("Go Chat/Messages, paid Zen, and other Free routes keep compatibility-sensi
       assert.deepEqual(forwarded.input[1], customCall);
       assert.equal(forwarded.input[2].type, "custom_tool_call_output");
     }
+  } finally {
+    await stopChild(router);
+    await closeServer(gateway.server);
+    rmSync(testRoot, { recursive: true, force: true });
+  }
+});
+
+test("OpenCode Go Messages sanitizes hosted/custom leftovers into named functions", async () => {
+  const testRoot = mkdtempSync(path.join(os.tmpdir(), "routing-opencode-messages-"));
+  const stateDir = path.join(testRoot, "state");
+  mkdirSync(stateDir, { recursive: true });
+  const spec = {
+    slug: "opencode-go-messages/identity-messages",
+    gatewayModel: "opencode-go-messages-identity-messages",
+    upstreamModel: "identity-messages",
+    provider: "opencode-go-messages",
+    listed: true,
+    displayName: "Go Messages identity fixture",
+    description: "Anthropic sanitizer fixture.",
+    priority: 449,
+    defaultEffort: "high",
+    reasoningLevels: [{ effort: "high", description: "Deep reasoning" }],
+    contextWindow: 131072,
+    autoCompact: 110000,
+    inputModalities: ["text"],
+    compHash: "opencode-go-messages-identity-messages-v1",
+  };
+  writeFileSync(path.join(testRoot, "user-models.json"), JSON.stringify({ version: 1, models: [spec] }), "utf8");
+  writeFileSync(
+    path.join(stateDir, "enabled-providers.json"),
+    `${JSON.stringify({ version: 1, providers: ["opencode-go"] })}\n`,
+  );
+  writeFileSync(path.join(stateDir, "opencode-go-api-key.secret"), "TEST_OPENCODE_KEY\n");
+
+  const gatewayRequests = [];
+  const gateway = await mockServer(async (request, response) => {
+    if (request.method === "GET") {
+      json(response, 200, { ok: true, credential_present: true });
+      return;
+    }
+    const body = await bodyJson(request);
+    gatewayRequests.push(body);
+    await writeFragmentedFunctionCallSse(response, {
+      model: body.model,
+      patch: "*** Begin Patch\n*** End Patch",
+    });
+  });
+  const routerPort = await openPort();
+  const router = run("router.mjs", {
+    CODEX_ROUTER_PORT: String(routerPort),
+    CODEX_ROUTER_STATE_DIR: stateDir,
+    MODEL_ROUTER_USER_MODELS: path.join(testRoot, "user-models.json"),
+    CODEX_HOME: path.join(testRoot, "codex"),
+    CODEX_ROUTER_GATEWAY_BASE_URL: `http://127.0.0.1:${gateway.port}/v1`,
+    CODEX_ROUTER_GATEWAY_HEALTH_URL: `http://127.0.0.1:${gateway.port}/health`,
+    CODEX_ROUTER_API_HEALTH_URL: `http://127.0.0.1:${gateway.port}/health`,
+    CODEX_ROUTER_GROK_OAUTH_HEALTH_URL: `http://127.0.0.1:${gateway.port}/health`,
+    CODEX_ROUTER_QUIET: "1",
+  });
+
+  try {
+    await waitFor(`${routerBase(routerPort)}/models`, router);
+    const response = await fetch(`${routerBase(routerPort)}/responses`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: spec.slug,
+        stream: true,
+        tool_choice: { type: "custom", name: "apply_patch" },
+        tools: [
+          {
+            type: "custom",
+            name: "apply_patch",
+            format: { type: "grammar", syntax: "lark", definition: "start: /.+/" },
+          },
+          {
+            type: "function",
+            name: "exec_command",
+            parameters: { type: "object", properties: { command: { type: "string" } } },
+          },
+          { type: "web_search", search_content_types: ["text", "image"] },
+        ],
+        input: "run it",
+      }),
+    });
+    assert.equal(response.status, 200, router.testErrors());
+    const forwarded = gatewayRequests.at(-1);
+    assert.equal(forwarded.model, spec.gatewayModel);
+    assert.equal(forwarded.tool_choice, "auto");
+    const forwardedNames = forwarded.tools.map((tool) => tool.name);
+    assert.ok(forwardedNames.includes("exec_command"));
+    assert.equal(forwardedNames.includes("apply_patch"), false);
+    assert.ok(forwarded.tools.every((tool) => tool.type === "function" && tool.name));
+    const execCommand = forwarded.tools.find((tool) => tool.name === "exec_command");
+    assert.deepEqual(execCommand.parameters.properties.command, { type: "string" });
   } finally {
     await stopChild(router);
     await closeServer(gateway.server);

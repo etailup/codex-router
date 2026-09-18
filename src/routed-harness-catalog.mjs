@@ -71,17 +71,23 @@ export function routedHarnessDefaultModel(models) {
 //
 // opencode's schema requires `output` beside `context` whenever `limit` is
 // present and rejects the whole document otherwise: opencode 1.18 refused every
-// model of a `{ context }`-only publish. The router has no per-model output cap
-// to report, but it does know where Codex compacts (`autoCompact`). opencode
+// model of a `{ context }`-only publish. The router usually has no per-model
+// output cap, but it does know where Codex compacts (`autoCompact`). opencode
 // compacts at `limit.input` less a small reserve when `input` is set, so
 // `input` is that threshold and `output` is the headroom the registry leaves
-// above it; opencode caps a single request at 32k either way. A model with no
+// above it, unless the route measured a smaller completion reserve. A local
+// `rendered + output > context` check that still advertises 131,072 output
+// refuses a Desktop-sized Union Alpha prompt the Messages hop would accept at
+// 32,768. opencode caps a single request at 32k either way. A model with no
 // usable threshold publishes no limit, which opencode reads as unknown.
 function opencodeLimit(model) {
   const context = contextWindow(model);
   const threshold = model.autoCompact;
   if (!context || !Number.isInteger(threshold) || threshold <= 0 || threshold >= context) return undefined;
-  return { context, input: threshold, output: context - threshold };
+  const measured = Number.isInteger(model.maxOutputTokens) && model.maxOutputTokens > 0
+    ? model.maxOutputTokens
+    : context - threshold;
+  return { context, input: threshold, output: measured };
 }
 
 function opencodeProvider({ models, baseUrl, secret }) {

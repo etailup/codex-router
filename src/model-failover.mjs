@@ -408,10 +408,16 @@ function eligible(
     requiredSearchMode,
     hasSearchHistory,
     cooled,
+    allowSameFamily,
   },
 ) {
   if (!model?.slug) return false;
-  if (canonicalProviderId(model.provider) === fromProvider) return false;
+  // Compact overflow is the one caller that may hop inside a family: a
+  // 262k Go Messages card and a 1M Go Chat sibling share a credential, so
+  // quota failover must still skip them, but a prompt the 262k card cannot
+  // hold is not evidence the 1M sibling cannot. Same-slug is already
+  // filtered by the ranking. Ordinary turns keep the default.
+  if (!allowSameFamily && canonicalProviderId(model.provider) === fromProvider) return false;
   if (cooled.has(cooldownScope(model.provider))) return false;
   if (Number.isFinite(estimatedTokens) && Number(model.contextWindow) < estimatedTokens) {
     return false;
@@ -456,6 +462,7 @@ export function rankFailoverCandidates(
     requiredSearchMode: requiredSearchModeOverride,
     chain = [],
     now,
+    allowSameFamily = false,
   } = options;
   const fromProvider = canonicalProviderId(from?.provider || "");
   // An explicitly captured absence is part of the request contract. `??`
@@ -478,6 +485,7 @@ export function rankFailoverCandidates(
         requiredSearchMode,
         hasSearchHistory,
         cooled,
+        allowSameFamily,
       }),
   );
 

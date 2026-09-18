@@ -17,4 +17,6 @@ test("subscription variants share a breaker while separately billed Zen does not
   assert.equal(cooldownScope("opencode-go-messages"), "opencode-go");
   assert.equal(cooldownScope("opencode-go-responses"), "opencode-go");
   assert.equal(cooldownScope("opencode-zen"), "opencode-zen");
+  assert.equal(cooldownScope("opencode-zen-messages"), "opencode-zen");
+  assert.equal(cooldownScope("opencode-zen-responses"), "opencode-zen");
 });

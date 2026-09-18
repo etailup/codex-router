@@ -85,7 +85,16 @@ test("OpenCode curation keeps each endpoint family on its documented protocol", 
     "opencode-free",
     "opencode-free-responses",
   ]);
-  assert.deepEqual(curationProviderIds("opencode-zen"), ["opencode-zen"]);
+  assert.deepEqual(curationProviderIds("opencode-zen"), [
+    "opencode-zen",
+    "opencode-zen-messages",
+    "opencode-zen-responses",
+  ]);
+  assert.deepEqual(curationProviderIds("opencode-zen-messages"), [
+    "opencode-zen",
+    "opencode-zen-messages",
+    "opencode-zen-responses",
+  ]);
   assert.deepEqual(curationProviderIds("opencode-go"), [
     "opencode-go",
     "opencode-go-messages",
@@ -109,7 +118,16 @@ test("OpenCode curation keeps each endpoint family on its documented protocol", 
   );
   assert.equal(
     curatedModelProviderId("opencode-zen", "muse-spark-1.2"),
-    "opencode-zen",
+    "opencode-zen-responses",
+  );
+  assert.equal(
+    curatedModelProviderId("opencode-zen", "claude-sonnet-4-5"),
+    "opencode-zen-messages",
+  );
+  assert.equal(curatedModelProviderId("opencode-zen", "glm-5.3"), "opencode-zen");
+  assert.match(
+    curatedModelBlockReason("opencode-zen", "gemini-3-pro") || "",
+    /Google's native protocol/,
   );
   assert.equal(curatedModelBlockReason("opencode-go", "grok-4.5"), undefined);
   assert.match(
@@ -262,7 +280,7 @@ test("OpenCode Free curation knows the documented windows its live catalog omits
   assert.equal(curatedModelContextLength("opencode-free", "mimo-v2.5-free"), undefined);
 });
 
-test("paid Zen curation identity remains byte-for-byte unchanged", () => {
+test("paid Zen Muse curation lands on the Responses variant", () => {
   const paidZen = userModelEntry({
     providerId: "opencode-zen",
     upstreamId: "muse-spark-1.2",
@@ -271,9 +289,9 @@ test("paid Zen curation identity remains byte-for-byte unchanged", () => {
     metadata: { contextWindow: 1_048_576 },
   });
   const [normalized] = normalizeCurationModels([paidZen], "opencode-zen");
-  assert.strictEqual(normalized, paidZen);
-  assert.equal(normalized.slug, "opencode-zen/muse-spark-1.2");
-  assert.equal(normalized.gatewayModel, "opencode-zen-muse-spark-1-2");
+  assert.equal(normalized.slug, "opencode-zen-responses/muse-spark-1.2");
+  assert.equal(normalized.gatewayModel, "opencode-zen-responses-muse-spark-1-2");
+  assert.equal(normalized.provider, "opencode-zen-responses");
 });
 
 test("OpenCode protocol normalization preserves metadata and deduplicates old routes", () => {
@@ -474,6 +492,10 @@ test("a curated model can opt into the auto tool-choice profile", () => {
   // otherwise unreachable: the catalog-only providers ship no registry model
   // to inherit a profile from, so the first curated model gets none.
   assert.equal(parseRequestProfile("auto-tool-choice"), "auto-tool-choice");
+});
+
+test("a curated model can opt into omit-tool-choice", () => {
+  assert.equal(parseRequestProfile("omit-tool-choice"), "omit-tool-choice");
 });
 
 test("a curated model can opt into the narrow encrypted-schema profile", () => {

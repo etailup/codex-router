@@ -62,6 +62,16 @@ const MODELS = [
     reasoningLevels: [],
     priority: 5,
   },
+  {
+    slug: "opencode-go-messages/union-alpha",
+    displayName: "Union Alpha (opencode Go)",
+    contextWindow: 262_144,
+    autoCompact: 180_000,
+    maxOutputTokens: 32_768,
+    inputModalities: ["text", "image"],
+    reasoningLevels: [{ effort: "high" }],
+    priority: 1,
+  },
 ];
 
 function manager(id, overrides = {}) {
@@ -404,6 +414,13 @@ test("opencode gets a limit its schema accepts, compacting where Codex does", ()
   const { models } = JSON.parse(readFileSync(DOCUMENTS.opencode, "utf8")).provider["codex-router"];
   // opencode rejects the whole document when `limit` lacks `output`.
   assert.deepEqual(models["moonshot/kimi-k3"].limit, { context: 262_144, input: 222_822, output: 39_322 });
+  // A measured completion reserve beats compact-headroom so OpenCode's local
+  // fit check cannot refuse a prompt the Messages hop would accept.
+  assert.deepEqual(models["opencode-go-messages/union-alpha"].limit, {
+    context: 262_144,
+    input: 180_000,
+    output: 32_768,
+  });
   // No compaction threshold, no limit: unknown rather than a guess.
   assert.equal(models["x-ai/grok-4.6"].limit, undefined);
 });

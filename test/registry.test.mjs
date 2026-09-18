@@ -206,6 +206,7 @@ test("provider registry exposes configured API and OAuth model families", () => 
       "openrouter/muse-spark-1.3-contributor",
       "openrouter/muse-spark-1.3",
       "openrouter/qwen3.8-flash",
+      "openrouter/union-alpha",
       "qwen-plan/deepseek-v4-flash-0731",
       "qwen-plan/deepseek-v4-pro-0813",
       "qwen-plan/deepseek-v4-pro",
@@ -297,7 +298,10 @@ test("provider registry exposes configured API and OAuth model families", () => 
   assert.equal(PROVIDERS.get("opencode-go-messages").variantOf, "opencode-go");
   assert.equal(PROVIDERS.get("opencode-go-responses").variantOf, "opencode-go");
   assert.equal(PROVIDERS.get("opencode-zen").variantOf, "opencode-go");
-  assert.equal(PROVIDERS.has("opencode-zen-responses"), false);
+  assert.equal(PROVIDERS.get("opencode-zen-messages").variantOf, "opencode-go");
+  assert.equal(PROVIDERS.get("opencode-zen-responses").variantOf, "opencode-go");
+  assert.equal(PROVIDERS.get("opencode-zen-messages").protocol, "anthropic");
+  assert.equal(PROVIDERS.get("opencode-zen-responses").protocol, "openai-responses");
   assert.equal(PROVIDERS.get("commandcode").variantOf, undefined);
   assert.equal(PROVIDERS.get("commandcode-messages").variantOf, "commandcode");
   assert.equal(
@@ -828,8 +832,10 @@ test("Union Alpha ships on OpenCode Go Messages with sourced stealth metadata", 
   assert.equal(model?.provider, "opencode-go-messages");
   assert.equal(PROVIDERS.get(model.provider).protocol, "anthropic");
   assert.equal(model?.contextWindow, 262_144);
-  assert.equal(model?.autoCompact, 131_072);
-  assert.ok(model.contextWindow - model.autoCompact >= 131_072);
+  assert.equal(model?.autoCompact, 180_000);
+  assert.equal(model?.maxOutputTokens, 32_768);
+  assert.ok(model.autoCompact > 110_000);
+  assert.ok(model.autoCompact < model.contextWindow);
   assert.deepEqual(model?.inputModalities, ["text", "image"]);
   assert.deepEqual(model?.reasoningLevels.map((level) => level.effort), ["high"]);
   assert.equal(model?.defaultEffort, "high");
@@ -838,6 +844,27 @@ test("Union Alpha ships on OpenCode Go Messages with sourced stealth metadata", 
   assert.notEqual(model?.multiAgentVersion, "v2");
   assert.equal(MODEL_BY_SLUG.has("opencode-go/union-alpha"), false);
   assert.equal(MODEL_BY_SLUG.has("opencode-go/omen-alpha"), false);
+});
+
+test("Union Alpha ships on OpenRouter with sourced stealth metadata", () => {
+  const model = MODEL_BY_SLUG.get("openrouter/union-alpha");
+  assert.equal(model?.upstreamModel, "stealth/union-alpha");
+  assert.equal(model?.provider, "openrouter");
+  assert.equal(PROVIDERS.get(model.provider).protocol ?? "openai", "openai");
+  assert.equal(model?.contextWindow, 262_144);
+  assert.equal(model?.autoCompact, 131_072);
+  assert.ok(model.contextWindow - model.autoCompact >= 131_072);
+  assert.deepEqual(model?.inputModalities, ["text", "image"]);
+  assert.deepEqual(model?.reasoningLevels.map((level) => level.effort), ["high"]);
+  assert.equal(model?.defaultEffort, "high");
+  assert.equal(model?.isFree, true);
+  // OpenRouter's /endpoints record for this id: tool_choice auto only
+  // (required and none are false). Codex still sends required unless the
+  // route downgrades it. No advertised reasoning-effort parameter.
+  assert.equal(model?.requestProfile, "auto-tool-choice");
+  assert.notEqual(model?.multiAgentVersion, "v2");
+  assert.equal(MODEL_BY_SLUG.has("openrouter/stealth/union-alpha"), false);
+  assert.equal(MODEL_BY_SLUG.has("commandcode/union-alpha"), false);
 });
 
 test("OpenCode Go routes retain upstream windows instead of the generic fallback", () => {
@@ -1844,15 +1871,19 @@ test("opencode's DeepSeek models never receive a forced tool_choice", () => {
     "opencode-go/deepseek-v4-flash",
     "opencode-go/deepseek-v4-pro",
     // Same class, observed 2026-08-15 in the full sweep: 400 on required
-    // (Kimi K2.7 Code on the chat route; the four Qwens on the messages
-    // route answer a bare {"model": ...} echo), clean probe calls under auto.
+    // (Kimi K2.7 Code on the chat route), clean probe calls under auto.
     "opencode-go/kimi-k2.7-code",
+  ]) {
+    assert.equal(MODEL_BY_SLUG.get(slug).requestProfile, "auto-tool-choice", slug);
+  }
+  for (const slug of [
     "opencode-go-messages/qwen3.6-plus",
     "opencode-go-messages/qwen3.7-max",
     "opencode-go-messages/qwen3.7-plus",
+    "opencode-go-messages/qwen3.8-flash",
     "opencode-go-messages/qwen3.8-max",
   ]) {
-    assert.equal(MODEL_BY_SLUG.get(slug).requestProfile, "auto-tool-choice", slug);
+    assert.equal(MODEL_BY_SLUG.get(slug).requestProfile, "omit-tool-choice", slug);
   }
   // The sibling opencode routes keep their defaults: the probe proved nothing
   // about them, and a provider-wide default is what the rule forbids. (kimi-k3
@@ -1860,6 +1891,7 @@ test("opencode's DeepSeek models never receive a forced tool_choice", () => {
   for (const slug of ["opencode-go/glm-5.3", "opencode-go-responses/grok-4.5", "opencode-go/mimo-v2.5"]) {
     assert.equal(MODEL_BY_SLUG.get(slug).requestProfile, undefined, slug);
   }
+  assert.equal(MODEL_BY_SLUG.get("opencode-go-messages/minimax-m3").requestProfile, undefined);
   const goGrok = MODEL_BY_SLUG.get("opencode-go-responses/grok-4.5");
   assert.equal(goGrok.provider, "opencode-go-responses");
   assert.equal(PROVIDERS.get(goGrok.provider).protocol, "openai-responses");

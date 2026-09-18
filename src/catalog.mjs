@@ -854,10 +854,11 @@ function pickerProviderGroup(provider) {
   if (value === "antigravity-oauth") return { rank: 0, key: "antigravity" };
   if (value === "deepseek") return { rank: 1, key: "deepseek" };
   // The opencode family shares one stored key: `opencode-go` and its variants
-  // (`opencode-go-messages`, `opencode-go-responses`, `opencode-zen`). Group
-  // them together so Zen models stay next to the Go models they relate to
-  // instead of falling into the rank-3 catch-all under their own key.
-  if (value.startsWith("opencode-go") || value === "opencode-zen") {
+  // (`opencode-go-messages`, `opencode-go-responses`, `opencode-zen` and the
+  // Zen Messages/Responses protocol variants). Group them together so Zen
+  // models stay next to the Go models they relate to instead of falling into
+  // the rank-3 catch-all under their own key.
+  if (value.startsWith("opencode-go") || value.startsWith("opencode-zen")) {
     return { rank: 2, key: "opencode" };
   }
   return { rank: 3, key: value };

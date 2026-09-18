@@ -677,6 +677,23 @@ test("a large parseable prologue is relayed at the byte budget and later content
   assert.equal(Buffer.concat(chunks).toString("utf8"), prologue + answer);
 });
 
+test("a reasoning_text content part is thinking, not an answer", async () => {
+  const turn = [
+    "event: response.created",
+    'data: {"type":"response.created","response":{"id":"r1"}}',
+    "",
+    "event: response.content_part.done",
+    'data: {"type":"response.content_part.done","part":{"type":"reasoning_text","reasoning":"thinking..."}}',
+    "",
+    "event: response.completed",
+    'data: {"type":"response.completed","response":{"id":"r1","output":[{"type":"message","content":[{"type":"reasoning_text","reasoning":"thinking..."}]}]}}',
+    "",
+  ].join("\n");
+  const result = await runGuard(turn);
+  assert.equal(result.empty, true);
+  assert.equal(result.live, false);
+});
+
 test("a fragmented initial event can finish before the prelude verdict", async () => {
   const prologue = `event: response.created\ndata: ${JSON.stringify({
     type: "response.created",

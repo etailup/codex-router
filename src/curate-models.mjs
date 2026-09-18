@@ -101,6 +101,8 @@ const REQUEST_PROFILE_DESCRIPTIONS = {
     "fold Codex's effort onto DashScope's documented ladder for this model's family " +
     "(Qwen3.8 none/low/medium/xhigh, GLM-5.3 low/high/max, DeepSeek V4.x none/high/max), " +
     "with `minimal` as the thinking-off rung, and downgrade Qwen3.8's forced tool_choice",
+  "omit-tool-choice":
+    'reject any explicit tool_choice (even "auto") while still calling the listed tools when the field is absent',
 };
 
 if (Object.keys(REQUEST_PROFILE_DESCRIPTIONS).some((profile) => !curatableRequestProfile(profile)) ||

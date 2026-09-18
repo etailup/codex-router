@@ -868,6 +868,14 @@ function modelProblem(model, providers, slugs, gatewayModels) {
       return `listed model ${model.slug} requires a valid autoCompact limit`;
     }
     if (
+      model.maxOutputTokens !== undefined &&
+      (!Number.isInteger(model.maxOutputTokens) ||
+        model.maxOutputTokens < 1 ||
+        model.maxOutputTokens > model.contextWindow)
+    ) {
+      return `listed model ${model.slug} has an invalid maxOutputTokens`;
+    }
+    if (
       !Array.isArray(model.inputModalities) ||
       model.inputModalities.length === 0 ||
       model.inputModalities.some((value) => !["text", "image"].includes(value))
