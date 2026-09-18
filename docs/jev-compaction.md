@@ -75,3 +75,10 @@ context preservation, key failures, authenticated envelopes and concurrent key
 creation. A real ephemeral native Codex 0.155.0-alpha.9 task also passed two
 Jev-compaction/Astra-continuation rounds on 2026-09-18. This validates protocol
 compatibility on that client and fixture, not quality across all workloads.
+
+After enablement, an ephemeral native task also passed automatic compaction on
+the production router, with its test-only threshold reduced to 10,000 tokens.
+The following turn retained the tool-result fact; measured native input fell
+from 144,113 to 19,101 tokens on that fixture. The user's global setting remained
+200,000. This verifies the automatic hook without asserting a general reduction
+ratio or retention quality.
